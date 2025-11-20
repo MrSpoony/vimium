@@ -9,12 +9,21 @@
 //
 // In theory, the browser's tab.lastAccessed timestamp field should allow us to sort tabs by
 // recency, but in practice it does not work across several edge cases. See the comments on #4368.
+const TAB_HISTORY_LIMIT = 50;
+
 class TabRecency {
   constructor() {
     this.counter = 1;
     this.tabIdToCounter = {};
     this.loaded = false;
     this.queuedActions = [];
+    // Tab history stack for forward/backward navigation (like Vim's <C-i> and <C-o>).
+    this.tabHistory = [];
+    this.tabHistoryPosition = -1;
+    // Flag to prevent adding to history during history navigation.
+    this.isNavigatingHistory = false;
+    // Count of pending history navigations which haven't re-registered yet.
+    this.pendingHistoryNavigations = 0;
   }
 
   // Add listeners to chrome.tabs, and load the index from session storage.
@@ -60,7 +69,11 @@ class TabRecency {
   // Loads the index from session storage.
   async loadFromStorage() {
     const tabsPromise = chrome.tabs.query({});
-    const storagePromise = chrome.storage.session.get("tabRecency");
+    const storagePromise = chrome.storage.session.get([
+      "tabRecency",
+      "tabHistory",
+      "tabHistoryPosition",
+    ]);
     const [tabs, storage] = await Promise.all([tabsPromise, storagePromise]);
     if (storage.tabRecency == null) return;
 
@@ -81,10 +94,25 @@ class TabRecency {
         delete this.tabIdToCounter[id];
       }
     }
+
+    // Load tab history and clean it up.
+    if (storage.tabHistory) {
+      this.tabHistory = storage.tabHistory.filter((id) => tabIds.has(id)).slice(-TAB_HISTORY_LIMIT);
+      this.tabHistoryPosition = storage.tabHistoryPosition ?? -1;
+      if (this.tabHistory.length === 0) {
+        this.tabHistoryPosition = -1;
+      } else if (this.tabHistoryPosition >= this.tabHistory.length) {
+        this.tabHistoryPosition = this.tabHistory.length - 1;
+      }
+    }
   }
 
   async saveToStorage() {
-    await chrome.storage.session.set({ tabRecency: this.tabIdToCounter });
+    await chrome.storage.session.set({
+      tabRecency: this.tabIdToCounter,
+      tabHistory: this.tabHistory,
+      tabHistoryPosition: this.tabHistoryPosition,
+    });
   }
 
   // - action: "register" or "unregister".
@@ -110,11 +138,48 @@ class TabRecency {
   register(tabId) {
     this.counter++;
     this.tabIdToCounter[tabId] = this.counter;
+
+    if (this.pendingHistoryNavigations > 0) {
+      this.pendingHistoryNavigations--;
+      if (this.pendingHistoryNavigations === 0) {
+        this.isNavigatingHistory = false;
+      }
+      this.saveToStorage();
+      return;
+    }
+
+    // Update tab history stack.
+    // If we're in the middle of history (went back), discard forward history.
+    if (this.tabHistoryPosition < this.tabHistory.length - 1) {
+      this.tabHistory = this.tabHistory.slice(0, this.tabHistoryPosition + 1);
+    }
+
+    // Add to history if it's a different tab than the current position.
+    if (this.tabHistory[this.tabHistoryPosition] !== tabId) {
+      this.tabHistory.push(tabId);
+      this.tabHistory = this.tabHistory.slice(-TAB_HISTORY_LIMIT);
+      this.tabHistoryPosition = this.tabHistory.length - 1;
+    }
+
     this.saveToStorage();
   }
 
   deregister(tabId) {
     delete this.tabIdToCounter[tabId];
+
+    const removalIndex = this.tabHistory.indexOf(tabId);
+    if (removalIndex !== -1) {
+      this.tabHistory.splice(removalIndex, 1);
+
+      if (this.tabHistory.length === 0) {
+        this.tabHistoryPosition = -1;
+      } else if (this.tabHistoryPosition > removalIndex) {
+        this.tabHistoryPosition--;
+      } else if (this.tabHistoryPosition >= this.tabHistory.length) {
+        this.tabHistoryPosition = this.tabHistory.length - 1;
+      }
+    }
+
     this.saveToStorage();
   }
 
@@ -133,6 +198,50 @@ class TabRecency {
     const ids = Object.keys(this.tabIdToCounter);
     ids.sort((a, b) => this.tabIdToCounter[b] - this.tabIdToCounter[a]);
     return ids.map((id) => parseInt(id));
+  }
+
+  // Navigate back in tab history (like Vim's <C-o>).
+  // Returns the tab ID to switch to, or null if at the beginning of history.
+  goBackInHistory() {
+    if (!this.loaded) throw new Error("TabRecency hasn't yet been loaded.");
+    if (this.tabHistory.length === 0) return null;
+
+    // Move back in history if not at the beginning.
+    if (this.tabHistoryPosition > 0) {
+      this.tabHistoryPosition--;
+      this.isNavigatingHistory = true;
+      this.pendingHistoryNavigations++;
+      this.saveToStorage();
+      return this.tabHistory[this.tabHistoryPosition];
+    }
+    return null;
+  }
+
+  // Navigate forward in tab history (like Vim's <C-i>).
+  // Returns the tab ID to switch to, or null if at the end of history.
+  goForwardInHistory() {
+    if (!this.loaded) throw new Error("TabRecency hasn't yet been loaded.");
+    if (this.tabHistory.length === 0) return null;
+
+    // Move forward in history if not at the end.
+    if (this.tabHistoryPosition < this.tabHistory.length - 1) {
+      this.tabHistoryPosition++;
+      this.isNavigatingHistory = true;
+      this.pendingHistoryNavigations++;
+      this.saveToStorage();
+      return this.tabHistory[this.tabHistoryPosition];
+    }
+    return null;
+  }
+
+  // Reset the navigation flag. Should be called after completing a history navigation.
+  resetNavigationFlag() {
+    if (this.pendingHistoryNavigations > 0) {
+      this.pendingHistoryNavigations--;
+    }
+    if (this.pendingHistoryNavigations === 0) {
+      this.isNavigatingHistory = false;
+    }
   }
 }
 

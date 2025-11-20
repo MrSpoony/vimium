@@ -464,6 +464,8 @@ const defaultKeyMappings = {
   "gt": "nextTab",
   "gT": "previousTab",
   "^": "visitPreviousTab",
+  "<c-o>": "tabHistoryBack",
+  "<c-i>": "tabHistoryForward",
   "<<": "moveTabLeft",
   ">>": "moveTabRight",
   "g0": "firstTab",

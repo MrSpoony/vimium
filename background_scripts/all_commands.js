@@ -453,6 +453,20 @@ const allCommands = [
   },
 
   {
+    name: "tabHistoryBack",
+    desc: "Go back in tab history",
+    group: "tabs",
+    background: true,
+  },
+
+  {
+    name: "tabHistoryForward",
+    desc: "Go forward in tab history",
+    group: "tabs",
+    background: true,
+  },
+
+  {
     name: "firstTab",
     desc: "Go to the first tab",
     group: "tabs",
