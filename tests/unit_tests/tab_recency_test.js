@@ -88,4 +88,92 @@ context("TabRecency", () => {
     await tabRecency.init();
     assert.equal([1], tabRecency.getTabsByRecency());
   });
+
+  context("tab history navigation", () => {
+    function simulateActivation() {
+      const currentTabId = tabRecency.tabHistory[tabRecency.tabHistoryPosition];
+      tabRecency.queueAction("register", currentTabId);
+    }
+
+    setup(async () => {
+      stub(chrome.tabs, "query", () => Promise.resolve([]));
+      await tabRecency.init();
+      // Create a history: visit tabs 1, 2, 3, 4 in order.
+      tabRecency.queueAction("register", 1);
+      tabRecency.queueAction("register", 2);
+      tabRecency.queueAction("register", 3);
+      tabRecency.queueAction("register", 4);
+    });
+
+    should("navigate history and clamp bounds", () => {
+      assert.equal([1, 2, 3, 4], tabRecency.tabHistory);
+      assert.equal(3, tabRecency.tabHistoryPosition);
+
+      assert.equal(3, tabRecency.goBackInHistory());
+      assert.equal(2, tabRecency.goBackInHistory());
+      assert.equal(1, tabRecency.goBackInHistory());
+      assert.equal(null, tabRecency.goBackInHistory());
+
+      assert.equal(2, tabRecency.goForwardInHistory());
+      assert.equal(3, tabRecency.goForwardInHistory());
+      assert.equal(4, tabRecency.goForwardInHistory());
+      assert.equal(null, tabRecency.goForwardInHistory());
+    });
+
+    should("discard forward history and skip additions during navigation", () => {
+      tabRecency.goBackInHistory();
+      simulateActivation();
+      tabRecency.goBackInHistory();
+      simulateActivation();
+      tabRecency.queueAction("register", 5);
+      assert.equal([1, 2, 5], tabRecency.tabHistory);
+      assert.equal(2, tabRecency.tabHistoryPosition);
+
+      const snapshot = [...tabRecency.tabHistory];
+      tabRecency.goBackInHistory();
+      tabRecency.queueAction("register", 6); // Should be ignored.
+      assert.equal(snapshot, tabRecency.tabHistory);
+
+      simulateActivation();
+      tabRecency.queueAction("register", 6);
+      assert.equal(6, tabRecency.tabHistory[tabRecency.tabHistory.length - 1]);
+    });
+
+    should("remove closed tabs and cap the history length", () => {
+      tabRecency.queueAction("deregister", 2);
+      assert.equal([1, 3, 4], tabRecency.tabHistory);
+      assert.equal(2, tabRecency.tabHistoryPosition);
+
+      tabRecency.tabHistory = [];
+      tabRecency.tabHistoryPosition = -1;
+      tabRecency.tabIdToCounter = {};
+      for (let id = 1; id <= 60; id++) {
+        tabRecency.queueAction("register", id);
+      }
+      assert.equal(50, tabRecency.tabHistory.length);
+      assert.equal(49, tabRecency.tabHistoryPosition);
+      assert.equal(11, tabRecency.tabHistory[0]);
+      assert.equal(60, tabRecency.tabHistory[49]);
+    });
+
+    should("clear navigation flag when activation events arrive", () => {
+      tabRecency.goBackInHistory();
+      assert.isTrue(tabRecency.isNavigatingHistory);
+      simulateActivation();
+      assert.isFalse(tabRecency.isNavigatingHistory);
+      tabRecency.queueAction("register", 5);
+      assert.equal(5, tabRecency.tabHistory[tabRecency.tabHistory.length - 1]);
+    });
+
+    should("maintain relative position when removing earlier tabs", () => {
+      tabRecency.goBackInHistory();
+      simulateActivation();
+      assert.equal(2, tabRecency.tabHistoryPosition);
+
+      tabRecency.queueAction("deregister", 1);
+      assert.equal([2, 3, 4], tabRecency.tabHistory);
+      assert.equal(1, tabRecency.tabHistoryPosition);
+      assert.equal(3, tabRecency.tabHistory[tabRecency.tabHistoryPosition]);
+    });
+  });
 });

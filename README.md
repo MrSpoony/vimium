@@ -77,6 +77,8 @@ Manipulating tabs:
     g0      go to the first tab. Use ng0 to go to n-th tab
     g$      go to the last tab
     ^       visit the previously-visited tab
+    <c-o>   go back in tab history
+    <c-i>   go forward in tab history
     t       create tab
     yt      duplicate current tab
     x       close current tab

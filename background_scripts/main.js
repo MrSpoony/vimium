@@ -417,6 +417,36 @@ const BackgroundCommands = {
     }
   },
 
+  async tabHistoryBack({ count }) {
+    await bgUtils.tabRecency.init();
+    for (let i = 0; i < count; i++) {
+      const tabId = bgUtils.tabRecency.goBackInHistory();
+      if (tabId === null) break;
+      try {
+        await chrome.tabs.get(tabId);
+        await selectSpecificTab({ id: tabId });
+      } catch (_error) {
+        bgUtils.tabRecency.resetNavigationFlag();
+        i--;
+      }
+    }
+  },
+
+  async tabHistoryForward({ count }) {
+    await bgUtils.tabRecency.init();
+    for (let i = 0; i < count; i++) {
+      const tabId = bgUtils.tabRecency.goForwardInHistory();
+      if (tabId === null) break;
+      try {
+        await chrome.tabs.get(tabId);
+        await selectSpecificTab({ id: tabId });
+      } catch (_error) {
+        bgUtils.tabRecency.resetNavigationFlag();
+        i--;
+      }
+    }
+  },
+
   async reload({ count, tab, registryEntry }) {
     const bypassCache = registryEntry.options.hard != null ? registryEntry.options.hard : false;
     await forCountTabs(count, tab, (tab) => {
